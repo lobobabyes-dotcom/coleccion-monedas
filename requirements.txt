@@ -1,0 +1,6 @@
+streamlit==1.39.0
+pandas==2.2.0
+psycopg2-binary==2.9.9
+plotly==5.18.0
+yfinance==0.2.36
+fpdf==1.7.2
