@@ -293,7 +293,14 @@ def obtener_datos():
                 cm.material,
                 cu.fecha_compra,
                 cm.foto_generica_url AS foto,
-                cm.peso_gramos AS peso
+                cm.peso_gramos AS peso,
+                cm.diametro_mm AS diametro,
+                cm.tirada,
+                cm.ceca,
+                cm.pureza,
+                cm.forma,
+                cm.canto,
+                cm.es_estimacion
             FROM catalogo_maestro cm
             LEFT JOIN coleccion_usuario cu ON cm.id_moneda = cu.id_moneda
             LEFT JOIN ventas v ON cu.id_item = v.id_item
@@ -318,7 +325,14 @@ def obtener_datos():
                 "Material",
                 "Fecha de Compra",
                 "Foto",
-                "Peso (g)"
+                "Peso (g)",
+                "Diámetro (mm)",
+                "Tirada",
+                "Ceca",
+                "Pureza",
+                "Forma",
+                "Canto",
+                "Es Estimación"
             ]
         )
         
@@ -1171,6 +1185,104 @@ with tab1:
             if len(df_filtrado) > 0:
                 valor_promedio = df_filtrado["Precio de Compra"].mean()
                 st.info(f"💎 Valor promedio de compra: ${valor_promedio:,.2f}")
+        
+        # ============================================================================
+        # SECCIÓN DE ESPECIFICACIONES TÉCNICAS
+        # ============================================================================
+        st.markdown("---")
+        st.subheader("🔬 Especificaciones Técnicas Detalladas")
+        st.caption("Haz clic en una moneda para ver sus datos completos")
+        
+        # Mostrar solo monedas en cartera (no vendidas) con datos técnicos
+        df_con_detalles = df_en_cartera.copy()
+        
+        if not df_con_detalles.empty:
+            # Agrupar por moneda para mostrar fichas
+            for idx, moneda in df_con_detalles.head(10).iterrows():  # Mostrar primeras 10
+                es_estimacion = moneda.get('Es Estimación', False)
+                nombre = moneda['Nombre de la Moneda']
+                anio = moneda['Año']
+                
+                # Crear expander con advertencia si es estimación
+                titulo_expander = f"{'⚠️ ' if es_estimacion else '✅ '}{nombre} ({anio})"
+                
+                with st.expander(titulo_expander, expanded=False):
+                    # Advertencia de estimación
+                    if es_estimacion:
+                        st.warning("⚠️ **Advertencia Académica**: Algunos datos técnicos de esta moneda son estimaciones basadas en investigación numismática, no registros oficiales.")
+                    
+                    # Columnas para organizar la información
+                    col_spec1, col_spec2 = st.columns(2)
+                    
+                    with col_spec1:
+                        st.markdown("### 📋 Información General")
+                        info_general = f"""
+                        - **País**: {moneda.get('País', 'N/A')}
+                        - **Año**: {moneda.get('Año', 'N/A')}
+                        - **Material**: {moneda.get('Material', 'N/A')}
+                        - **Forma**: {moneda.get('Forma', 'N/A')}
+                        """
+                        st.markdown(info_general)
+                        
+                        st.markdown("### 💰 Datos de Compra")
+                        datos_compra = f"""
+                        - **Precio Compra**: €{moneda.get('Precio de Compra', 0):,.2f}
+                        - **Fecha**: {moneda.get('Fecha de Compra', 'N/A')}
+                        - **Estado**: {moneda.get('Estado', 'N/A')}
+                        """
+                        st.markdown(datos_compra)
+                    
+                    with col_spec2:
+                        st.markdown("### ⚙️ Especificaciones Técnicas")
+                        
+                        # Peso y diámetro
+                        peso = moneda.get('Peso (g)')
+                        diametro = moneda.get('Diámetro (mm)')
+                        pureza = moneda.get('Pureza')
+                        ceca = moneda.get('Ceca')
+                        canto = moneda.get('Canto')
+                        tirada = moneda.get('Tirada')
+                        
+                        specs_tecnicas = f"""
+                        - **Peso**: {f'{peso:.2f} g' if peso else 'N/A'}
+                        - **Diámetro**: {f'{diametro:.1f} mm' if diametro else 'N/A'}
+                        - **Pureza**: {f'{pureza:.3f}' if pureza else 'N/A'}
+                        - **Ceca**: {ceca if ceca else 'N/A'}
+                        - **Canto**: {canto if canto else 'N/A'}
+                        """
+                        st.markdown(specs_tecnicas)
+                        
+                        # Tirada con clasificación de rareza
+                        if tirada:
+                            if tirada < 10000:
+                                rareza = "🌟 Extremadamente Rara"
+                            elif tirada < 100000:
+                                rareza = "⭐ Muy Rara"
+                            elif tirada < 500000:
+                                rareza = "💫 Rara"
+                            elif tirada < 1000000:
+                                rareza = "✨ Escasa"
+                            else:
+                                rareza = "📊 Común"
+                            
+                            st.markdown(f"**Tirada**: {tirada:,} unidades")
+                            st.info(f"**Clasificación**: {rareza}")
+                        else:
+                            st.markdown("**Tirada**: Desconocida")
+                    
+                    # Separador visual
+                    st.markdown("---")
+                    
+                    # Indicador de calidad de datos
+                    if es_estimacion:
+                        st.caption("🔬 Datos de investigación numismática | Estimaciones basadas en fuentes académicas")
+                    else:
+                        st.caption("✅ Datos oficiales verificados | Fuentes: Casas de moneda y registros históricos")
+            
+            if len(df_con_detalles) > 10:
+                st.info(f"📋 Mostrando las primeras 10 de {len(df_con_detalles)} monedas. Las demás están en la tabla principal.")
+        else:
+            st.info("📋 No hay monedas con especificaciones técnicas disponibles")
         
         # ============================================================================
         # SECCIÓN DE GESTIÓN DE INVENTARIO
