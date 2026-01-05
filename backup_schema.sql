@@ -33,7 +33,9 @@ CREATE TABLE catalogo_maestro (
     peso_gramos DECIMAL(10, 2),
     diametro_mm DECIMAL(10, 2),
     foto_generica_url VARCHAR(500),
-    CONSTRAINT check_anio CHECK (anio > 0 AND anio <= 2100)
+    popularidad INTEGER DEFAULT 0,
+    CONSTRAINT check_anio CHECK (anio > 0 AND anio <= 2100),
+    CONSTRAINT check_popularidad CHECK (popularidad >= 0)
 );
 
 -- ============================================================================
@@ -82,6 +84,29 @@ CREATE TABLE ventas (
 );
 
 -- ============================================================================
+-- TABLA: solicitudes_catalogo
+-- Descripción: Solicitudes de usuarios para añadir nuevas monedas al catálogo
+-- ============================================================================
+CREATE TABLE solicitudes_catalogo (
+    id_solicitud INTEGER PRIMARY KEY,
+    nombre VARCHAR(200) NOT NULL,
+    pais VARCHAR(100) NOT NULL,
+    anio INTEGER NOT NULL,
+    material VARCHAR(100) NOT NULL,
+    peso_gramos DECIMAL(10, 2),
+    diametro_mm DECIMAL(10, 2),
+    foto_generica_url VARCHAR(500),
+    usuario_solicitante INTEGER NOT NULL,
+    fecha_solicitud TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT fk_usuario_solicitante FOREIGN KEY (usuario_solicitante) 
+        REFERENCES usuarios(id_usuario) 
+        ON DELETE CASCADE,
+    
+    CONSTRAINT check_anio_solicitud CHECK (anio > 0 AND anio <= 2100)
+);
+
+-- ============================================================================
 -- ÍNDICES para mejorar el rendimiento
 -- ============================================================================
 
@@ -90,6 +115,7 @@ CREATE INDEX idx_catalogo_nombre ON catalogo_maestro(nombre);
 CREATE INDEX idx_catalogo_pais ON catalogo_maestro(pais);
 CREATE INDEX idx_catalogo_anio ON catalogo_maestro(anio);
 CREATE INDEX idx_catalogo_material ON catalogo_maestro(material);
+CREATE INDEX idx_catalogo_popularidad ON catalogo_maestro(popularidad DESC);
 
 -- Índices en coleccion_usuario
 CREATE INDEX idx_coleccion_usuario ON coleccion_usuario(id_usuario);

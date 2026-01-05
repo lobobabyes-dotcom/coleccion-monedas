@@ -46,7 +46,7 @@ def obtener_catalogo():
         query = """
             SELECT id_moneda, nombre, pais, anio
             FROM catalogo_maestro
-            ORDER BY nombre
+            ORDER BY popularidad DESC, nombre ASC
         """
         cursor.execute(query)
         rows = cursor.fetchall()
@@ -86,6 +86,14 @@ def añadir_moneda(id_moneda, fecha_compra, precio_compra, estado):
             query_insert,
             (nuevo_id, 100, id_moneda, estado, fecha_compra, float(precio_compra))
         )
+        
+        # Incrementar popularidad de la moneda en el catálogo
+        query_update_popularidad = """
+            UPDATE catalogo_maestro 
+            SET popularidad = popularidad + 1 
+            WHERE id_moneda = %s
+        """
+        cursor.execute(query_update_popularidad, (id_moneda,))
         
         conexion.commit()
         cursor.close()
@@ -410,6 +418,237 @@ def registrar_venta(id_item, fecha_venta, precio_venta, comprador, gastos_envio,
                 pass
         return False, 0, str(e)
 
+# Función para eliminar una moneda de la colección
+def eliminar_moneda(id_item):
+    conexion, error = conectar_bd()
+    if conexion is None:
+        return False, error
+    
+    try:
+        cursor = conexion.cursor()
+        # Eliminar el registro de coleccion_usuario
+        query_delete = "DELETE FROM coleccion_usuario WHERE id_item = %s"
+        cursor.execute(query_delete, (id_item,))
+        
+        # Verificar si se eliminó algo
+        if cursor.rowcount == 0:
+            cursor.close()
+            conexion.close()
+            return False, "No se encontró la moneda con ese ID"
+        
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+        return True, None
+    except Exception as e:
+        if conexion:
+            try:
+                conexion.rollback()
+                conexion.close()
+            except:
+                pass
+        return False, str(e)
+
+# Función para actualizar datos de una moneda de la colección
+def actualizar_moneda(id_item, nuevo_estado, nuevo_precio, nueva_fecha):
+    conexion, error = conectar_bd()
+    if conexion is None:
+        return False, error
+    
+    try:
+        cursor = conexion.cursor()
+        # Actualizar el registro
+        query_update = """
+            UPDATE coleccion_usuario 
+            SET estado_conservacion = %s,
+                precio_compra = %s,
+                fecha_compra = %s
+            WHERE id_item = %s
+        """
+        
+        cursor.execute(
+            query_update,
+            (nuevo_estado, float(nuevo_precio), nueva_fecha, id_item)
+        )
+        
+        # Verificar si se actualizó algo
+        if cursor.rowcount == 0:
+            cursor.close()
+            conexion.close()
+            return False, "No se encontró la moneda con ese ID"
+        
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+        return True, None
+    except Exception as e:
+        if conexion:
+            try:
+                conexion.rollback()
+                conexion.close()
+            except:
+                pass
+        return False, str(e)
+
+# Función para proponer una nueva moneda (enviada a moderación)
+def proponer_nueva_referencia(nombre, pais, anio, material, peso_gramos, diametro_mm, foto_url=None):
+    conexion, error = conectar_bd()
+    if conexion is None:
+        return False, error
+    
+    try:
+        cursor = conexion.cursor()
+        # Obtener el próximo id_solicitud
+        query_max_id = "SELECT COALESCE(MAX(id_solicitud), 0) + 1 FROM solicitudes_catalogo"
+        cursor.execute(query_max_id)
+        result = cursor.fetchone()
+        nuevo_id = result[0]
+        
+        # Insertar nueva solicitud
+        query_insert = """
+            INSERT INTO solicitudes_catalogo 
+            (id_solicitud, nombre, pais, anio, material, peso_gramos, diametro_mm, foto_generica_url, usuario_solicitante)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        """
+        
+        cursor.execute(
+            query_insert,
+            (nuevo_id, nombre, pais, anio, material, 
+             float(peso_gramos) if peso_gramos else None,
+             float(diametro_mm) if diametro_mm else None,
+             foto_url if foto_url else None,
+             100)  # Usuario por defecto
+        )
+        
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+        return True, None
+    except Exception as e:
+        if conexion:
+            try:
+                conexion.rollback()
+                conexion.close()
+            except:
+                pass
+        return False, str(e)
+
+# Función para obtener solicitudes pendientes de aprobación
+def obtener_solicitudes_pendientes():
+    conexion, error = conectar_bd()
+    if conexion is None:
+        return [], error
+    
+    try:
+        cursor = conexion.cursor()
+        query = """
+            SELECT id_solicitud, nombre, pais, anio, material, 
+                   peso_gramos, diametro_mm, fecha_solicitud
+            FROM solicitudes_catalogo
+            ORDER BY fecha_solicitud DESC
+        """
+        cursor.execute(query)
+        rows = cursor.fetchall()
+        cursor.close()
+        conexion.close()
+        return rows, None
+    except Exception as e:
+        if conexion:
+            try:
+                conexion.close()
+            except:
+                pass
+        return [], str(e)
+
+# Función para aprobar una solicitud (moverla al catálogo maestro)
+def aprobar_solicitud(id_solicitud):
+    conexion, error = conectar_bd()
+    if conexion is None:
+        return False, error
+    
+    try:
+        cursor = conexion.cursor()
+        
+        # Obtener datos de la solicitud
+        query_get = """
+            SELECT nombre, pais, anio, material, peso_gramos, diametro_mm, foto_generica_url
+            FROM solicitudes_catalogo
+            WHERE id_solicitud = %s
+        """
+        cursor.execute(query_get, (id_solicitud,))
+        result = cursor.fetchone()
+        
+        if not result:
+            cursor.close()
+            conexion.close()
+            return False, "No se encontró la solicitud"
+        
+        nombre, pais, anio, material, peso_gramos, diametro_mm, foto_url = result
+        
+        # Obtener el próximo id_moneda
+        query_max_id = "SELECT COALESCE(MAX(id_moneda), 0) + 1 FROM catalogo_maestro"
+        cursor.execute(query_max_id)
+        result_id = cursor.fetchone()
+        nuevo_id = result_id[0]
+        
+        # Insertar en catalogo_maestro
+        query_insert = """
+            INSERT INTO catalogo_maestro 
+            (id_moneda, nombre, pais, anio, material, peso_gramos, diametro_mm, foto_generica_url, popularidad)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, 0)
+        """
+        
+        cursor.execute(
+            query_insert,
+            (nuevo_id, nombre, pais, anio, material, peso_gramos, diametro_mm, foto_url)
+        )
+        
+        # Eliminar de solicitudes
+        query_delete = "DELETE FROM solicitudes_catalogo WHERE id_solicitud = %s"
+        cursor.execute(query_delete, (id_solicitud,))
+        
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+        return True, None
+    except Exception as e:
+        if conexion:
+            try:
+                conexion.rollback()
+                conexion.close()
+            except:
+                pass
+        return False, str(e)
+
+# Función para rechazar una solicitud (eliminarla)
+def rechazar_solicitud(id_solicitud):
+    conexion, error = conectar_bd()
+    if conexion is None:
+        return False, error
+    
+    try:
+        cursor = conexion.cursor()
+        query_delete = "DELETE FROM solicitudes_catalogo WHERE id_solicitud = %s"
+        cursor.execute(query_delete, (id_solicitud,))
+        
+        if cursor.rowcount == 0:
+            cursor.close()
+            conexion.close()
+            return False, "No se encontró la solicitud"
+        
+        conexion.commit()
+        cursor.close()
+        conexion.close()
+        return True, None
+    except Exception as e:
+        if conexion:
+            try:
+                conexion.rollback()
+                conexion.close()
+            except:
+                pass
+        return False, str(e)
+
 
 # ============================================================================
 # BARRA LATERAL - PRECIOS DE MERCADO
@@ -529,6 +768,58 @@ else:
                 else:
                     st.error(f"❌ Error al guardar: {error}")
 
+# ============================================================================
+# BARRA LATERAL - PROPONER NUEVA MONEDA
+# ============================================================================
+
+st.sidebar.markdown("---")
+st.sidebar.subheader("🔍 ¿No encuentras tu moneda?")
+
+# Expander para proponer nueva moneda
+with st.sidebar.expander("💡 Propón una moneda nueva"):
+    st.markdown("**Si no encuentras tu moneda en el catálogo, proponla aquí.**")
+    st.caption("Tu propuesta será revisada por el administrador.")
+    
+    with st.form("formulario_propuesta", clear_on_submit=True):
+        prop_nombre = st.text_input("Nombre de la Moneda *", placeholder="Ej: Ducat de Oro")
+        prop_pais = st.text_input("País *", placeholder="Ej: Austria")
+        
+        col_prop1, col_prop2 = st.columns(2)
+        with col_prop1:
+            prop_anio = st.number_input("Año *", min_value=1, max_value=2100, value=2000, step=1)
+        with col_prop2:
+            prop_material = st.text_input("Material *", placeholder="Ej: Plata .925")
+        
+        col_prop3, col_prop4 = st.columns(2)
+        with col_prop3:
+            prop_peso = st.number_input("Peso (g)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+        with col_prop4:
+            prop_diametro = st.number_input("Diámetro (mm)", min_value=0.0, value=0.0, step=0.01, format="%.2f")
+        
+        prop_foto = st.text_input("URL de Foto (opcional)", placeholder="https://...")
+        
+        submit_propuesta = st.form_submit_button("📤 Enviar Propuesta", use_container_width=True)
+        
+        if submit_propuesta:
+            if not prop_nombre or not prop_pais or not prop_material:
+                st.error("⚠️ Debes completar los campos obligatorios (*)")
+            else:
+                exito, error = proponer_nueva_referencia(
+                    prop_nombre,
+                    prop_pais,
+                    prop_anio,
+                    prop_material,
+                    prop_peso if prop_peso > 0 else None,
+                    prop_diametro if prop_diametro > 0 else None,
+                    prop_foto if prop_foto else None
+                )
+                
+                if exito:
+                    st.success("✅ ¡Tu moneda ha sido enviada a revisión por el administrador!")
+                    st.info("📧 Recibirás una notificación cuando sea aprobada.")
+                else:
+                    st.error(f"❌ Error al enviar: {error}")
+
 st.sidebar.markdown("---")
 
 # Botón de descarga de PDF
@@ -612,7 +903,12 @@ st.title("🪙 Colección de Monedas")
 st.markdown("---")
 
 # Crear pestañas para organizar la aplicación
-tab1, tab2, tab3 = st.tabs(["🏛️ Mi Colección", "📚 Gestión del Catálogo", "💸 Registrar Venta"])
+tab1, tab2, tab3, tab4 = st.tabs([
+    "🏛️ Mi Colección", 
+    "📚 Gestión del Catálogo", 
+    "💸 Registrar Venta",
+    "👮 Panel de Admin"
+])
 
 # ============================================================================
 # PESTAÑA 1: MI COLECCIÓN
@@ -876,6 +1172,144 @@ with tab1:
                 valor_promedio = df_filtrado["Precio de Compra"].mean()
                 st.info(f"💎 Valor promedio de compra: ${valor_promedio:,.2f}")
         
+        # ============================================================================
+        # SECCIÓN DE GESTIÓN DE INVENTARIO
+        # ============================================================================
+        st.markdown("---")
+        st.subheader("🛠️ Gestionar Inventario")
+        st.markdown("Edita o elimina monedas de tu cartera")
+        
+        # Obtener monedas disponibles para editar (solo las no vendidas)
+        monedas_editar, error_editar = obtener_monedas_disponibles_venta()
+        
+        if error_editar:
+            st.error(f"Error al cargar monedas: {error_editar}")
+        elif not monedas_editar:
+            st.info("📋 No hay monedas en tu cartera para gestionar")
+        else:
+            # Crear diccionario de opciones para el selectbox
+            opciones_monedas_editar = {}
+            opciones_display_editar = []
+            
+            for id_item, nombre, anio, precio_compra in monedas_editar:
+                display_text = f"ID {id_item} - {nombre} ({anio}) - Compra: €{precio_compra:.2f}"
+                opciones_monedas_editar[display_text] = (id_item, nombre, anio, precio_compra)
+                opciones_display_editar.append(display_text)
+            
+            # Selectbox para seleccionar moneda
+            moneda_edit_seleccionada = st.selectbox(
+                "Selecciona una moneda de tu cartera",
+                options=opciones_display_editar,
+                help="Selecciona la moneda que deseas editar o eliminar",
+                key="selectbox_editar_moneda"
+            )
+            
+            if moneda_edit_seleccionada:
+                id_item_seleccionado, nombre_moneda, anio_moneda, precio_actual = opciones_monedas_editar[moneda_edit_seleccionada]
+                
+                # Obtener datos actuales de la moneda seleccionada
+                # Buscar en el dataframe original
+                moneda_actual = df_en_cartera[df_en_cartera['Nombre de la Moneda'] == nombre_moneda]
+                if not moneda_actual.empty:
+                    estado_actual = moneda_actual.iloc[0]['Estado']
+                    fecha_actual = moneda_actual.iloc[0]['Fecha de Compra']
+                else:
+                    estado_actual = "N/A"
+                    fecha_actual = datetime.now().date()
+                
+                st.markdown("---")
+                
+                # Dos columnas: Editar y Eliminar
+                col_editar, col_eliminar = st.columns(2)
+                
+                # COLUMNA 1: EDITAR
+                with col_editar:
+                    st.markdown("### ✏️ Editar Datos")
+                    
+                    with st.form(f"form_editar_{id_item_seleccionado}", clear_on_submit=False):
+                        nuevo_precio = st.number_input(
+                            "Precio de Compra (€)",
+                            min_value=0.0,
+                            value=float(precio_actual),
+                            step=0.01,
+                            format="%.2f",
+                            key=f"precio_{id_item_seleccionado}"
+                        )
+                        
+                        nuevo_estado = st.text_input(
+                            "Estado de Conservación",
+                            value=estado_actual,
+                            placeholder="Ej: MBC, EBC, SC",
+                            key=f"estado_{id_item_seleccionado}"
+                        )
+                        
+                        nueva_fecha = st.date_input(
+                            "Fecha de Compra",
+                            value=pd.to_datetime(fecha_actual).date() if pd.notna(fecha_actual) else datetime.now().date(),
+                            key=f"fecha_{id_item_seleccionado}"
+                        )
+                        
+                        submit_editar = st.form_submit_button(
+                            "💾 Actualizar Datos",
+                            use_container_width=True,
+                            type="primary"
+                        )
+                        
+                        if submit_editar:
+                            if not nuevo_estado:
+                                st.error("⚠️ El estado no puede estar vacío")
+                            elif nuevo_precio <= 0:
+                                st.error("⚠️ El precio debe ser mayor a 0")
+                            else:
+                                # Actualizar en la base de datos
+                                exito, error = actualizar_moneda(
+                                    id_item_seleccionado,
+                                    nuevo_estado,
+                                    nuevo_precio,
+                                    nueva_fecha
+                                )
+                                
+                                if exito:
+                                    st.success(f"✅ Moneda actualizada exitosamente!")
+                                    st.balloons()
+                                    # Esperar un momento y recargar
+                                    import time
+                                    time.sleep(1)
+                                    st.rerun()
+                                else:
+                                    st.error(f"❌ Error al actualizar: {error}")
+                
+                # COLUMNA 2: ELIMINAR (ZONA DE PELIGRO)
+                with col_eliminar:
+                    st.markdown("### ⚠️ Zona de Peligro")
+                    st.warning("**ADVERTENCIA:** Esta acción no se puede deshacer")
+                    
+                    st.markdown(f"""
+                    **Moneda a eliminar:**
+                    - 🪙 {nombre_moneda} ({anio_moneda})
+                    - 💰 Precio: €{precio_actual:.2f}
+                    - 📊 Estado: {estado_actual}
+                    """)
+                    
+                    # Botón de eliminar fuera del form para evitar conflictos
+                    if st.button(
+                        "🗑️ Eliminar Moneda",
+                        type="primary",
+                        use_container_width=True,
+                        key=f"btn_eliminar_{id_item_seleccionado}"
+                    ):
+                        # Confirmar eliminación
+                        exito, error = eliminar_moneda(id_item_seleccionado)
+                        
+                        if exito:
+                            st.success(f"✅ Moneda eliminada exitosamente!")
+                            # Esperar un momento y recargar
+                            import time
+                            time.sleep(1)
+                            st.rerun()
+                        else:
+                            st.error(f"❌ Error al eliminar: {error}")
+        
     elif df is not None and df.empty:
         st.warning("⚠️ No hay monedas en tu colección.")
         st.info("💡 Agrega monedas desde la barra lateral o crea nuevas referencias en la pestaña 'Gestión del Catálogo'.")
@@ -1002,6 +1436,14 @@ with tab2:
     # Mostrar catálogo actual
     st.subheader("📖 Catálogo Actual")
     
+    # Buscador de monedas
+    busqueda = st.text_input(
+        "🔍 Buscar en el catálogo",
+        placeholder="Escribe nombre, país, año o material...",
+        help="Filtra las monedas del catálogo en tiempo real",
+        key="busqueda_catalogo"
+    )
+    
     catalogo_completo, error_cat = obtener_catalogo()
     
     if catalogo_completo and not error_cat:
@@ -1011,8 +1453,22 @@ with tab2:
             columns=["ID", "Nombre", "País", "Año"]
         )
         
+        # Aplicar filtro de búsqueda si hay texto
+        if busqueda:
+            busqueda_lower = busqueda.lower()
+            df_catalogo_filtrado = df_catalogo[
+                df_catalogo['Nombre'].str.lower().str.contains(busqueda_lower, na=False) |
+                df_catalogo['País'].str.lower().str.contains(busqueda_lower, na=False) |
+                df_catalogo['Año'].astype(str).str.contains(busqueda_lower, na=False) |
+                df_catalogo['ID'].astype(str).str.contains(busqueda_lower, na=False)
+            ]
+            st.caption(f"🔎 Mostrando {len(df_catalogo_filtrado)} de {len(df_catalogo)} monedas")
+        else:
+            df_catalogo_filtrado = df_catalogo
+            st.caption(f"📊 Total de monedas en catálogo: {len(df_catalogo)}")
+        
         st.dataframe(
-            df_catalogo,
+            df_catalogo_filtrado,
             use_container_width=True,
             height=400,
             hide_index=True
@@ -1169,6 +1625,114 @@ with tab3:
         
         st.markdown("---")
         st.caption(f"💡 Tienes {len(monedas_disponibles)} moneda(s) disponible(s) para vender")
+
+# ============================================================================
+# PESTAÑA 4: PANEL DE ADMINISTRACIÓN
+# ============================================================================
+with tab4:
+    st.header("👮 Panel de Administración")
+    st.markdown("**Gestión de solicitudes de monedas propuestas por la comunidad**")
+    st.markdown("---")
+    
+    # Autenticación simple
+    password_input = st.text_input(
+        "🔐 Contraseña de Administrador",
+        type="password",
+        help="Ingresa la contraseña para acceder al panel de administración",
+        key="admin_password"
+    )
+    
+    if password_input == "admin123":
+        st.success("✅ Acceso concedido")
+        st.markdown("---")
+        
+        # Obtener solicitudes pendientes
+        solicitudes, error_solicitudes = obtener_solicitudes_pendientes()
+        
+        if error_solicitudes:
+            st.error(f"❌ Error al cargar solicitudes: {error_solicitudes}")
+        elif not solicitudes:
+            st.info("📋 No hay solicitudes pendientes de revisión")
+            st.balloons()
+        else:
+            st.subheader(f"📋 Solicitudes Pendientes ({len(solicitudes)})")
+            st.caption("Revisa y aprueba las monedas propuestas por los usuarios")
+            
+            # Mostrar cada solicitud
+            for idx, solicitud in enumerate(solicitudes):
+                id_sol, nombre, pais, anio, material, peso, diametro, fecha_sol = solicitud
+                
+                with st.expander(f"**{nombre}** ({pais}, {anio})", expanded=(idx == 0)):
+                    # Información de la solicitud
+                    col_info1, col_info2 = st.columns(2)
+                    
+                    with col_info1:
+                        st.markdown(f"""
+                        **📋 Información de la Moneda**
+                        - **Nombre**: {nombre}
+                        - **País**: {pais}
+                        - **Año**: {anio}
+                        - **Material**: {material}
+                        """)
+                    
+                    with col_info2:
+                        st.markdown(f"""
+                        **⚙️ Especificaciones Técnicas**
+                        - **Peso**: {float(peso) if peso else 'N/A'} g
+                        - **Diámetro**: {float(diametro) if diametro else 'N/A'} mm
+                        - **Fecha Solicitud**: {fecha_sol}
+                        - **ID**: {id_sol}
+                        """)
+                    
+                    st.markdown("---")
+                    
+                    # Botones de acción
+                    col_btn1, col_btn2, col_btn3 = st.columns([1, 1, 2])
+                    
+                    with col_btn1:
+                        if st.button(
+                            "✅ Aprobar",
+                            key=f"aprobar_{id_sol}",
+                            type="primary",
+                            use_container_width=True
+                        ):
+                            exito, error = aprobar_solicitud(id_sol)
+                            if exito:
+                                st.success(f"✅ '{nombre}' ha sido añadida al catálogo maestro!")
+                                st.balloons()
+                                import time
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Error al aprobar: {error}")
+                    
+                    with col_btn2:
+                        if st.button(
+                            "❌ Rechazar",
+                            key=f"rechazar_{id_sol}",
+                            use_container_width=True
+                        ):
+                            exito, error = rechazar_solicitud(id_sol)
+                            if exito:
+                                st.warning(f"🗑️ Solicitud de '{nombre}' ha sido rechazada y eliminada")
+                                import time
+                                time.sleep(1)
+                                st.rerun()
+                            else:
+                                st.error(f"❌ Error al rechazar: {error}")
+                    
+                    with col_btn3:
+                        st.caption("⚠️ Las acciones son irreversibles")
+            
+            st.markdown("---")
+            st.metric("Total de Solicitudes Pendientes", len(solicitudes))
+    
+    elif password_input:
+        st.error("❌ Contraseña incorrecta. Acceso denegado.")
+        st.warning("🔒 Solo los administradores pueden acceder a este panel")
+    else:
+        st.info("🔐 Ingresa la contraseña de administrador para continuar")
+        st.caption("💡 Pista: Para testing usa 'admin123'")
 
 
 # Pie de página
