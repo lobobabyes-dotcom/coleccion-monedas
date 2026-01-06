@@ -671,139 +671,158 @@ def rechazar_solicitud(id_solicitud):
 
 def buscar_candidatos_web(query):
     """
-    Búsqueda híbrida mejorada con priorización de términos exactos
-    Metal específico aumenta prioridad pero no descarta resultados
+    Búsqueda mejorada que genera VARIANTES de la misma moneda
+    En lugar de mostrar 4 monedas diferentes, muestra 4 versiones de la misma
     """
     candidatos = []
     
-    # Palabras clave numismáticas para filtrar
+    # Palabras clave numismáticas
     palabras_coin = ['moneda', 'coin', 'numismatic', 'mint', 'currency', 'onza', 'dólar', 'peso', 'real', 'denario']
     
-    # Detectar metales específicos en la query (para priorizar, no filtrar)
-    metales = {
-        'silver': ['silver', 'plata', 'ag'],
-        'gold': ['gold', 'oro', 'au'],
-        'copper': ['copper', 'cobre', 'cu']
+    # Detectar metales y tamaños comunes
+    metales_variantes = {
+        'silver': {'nombres': ['silver', 'plata'], 'simbolo': 'Ag', 'color': '🥈'},
+        'gold': {'nombres': ['gold', 'oro'], 'simbolo': 'Au', 'color': '🥇'},
+        'platinum': {'nombres': ['platinum', 'platino'], 'simbolo': 'Pt', 'color': '⚪'},
+        'copper': {'nombres': ['copper', 'cobre'], 'simbolo': 'Cu', 'color': '🟤'}
     }
     
-    metal_buscado = None
+    tamaños_variantes = ['1 oz', '1/2 oz', '1/4 oz', '1/10 oz', '2 oz', '5 oz']
+    
+    # Identificar el metal buscado
+    metal_principal = None
     query_lower = query.lower()
-    for metal, variantes in metales.items():
-        if any(var in query_lower for var in variantes):
-            metal_buscado = metal
+    for metal, info in metales_variantes.items():
+        if any(nombre in query_lower for nombre in info['nombres']):
+            metal_principal = metal
             break
     
-    # PASO A: Wikipedia EN INGLÉS
+    # Extraer el nombre base de la moneda (sin metal ni tamaño)
+    query_base = query_lower
+    for metal, info in metales_variantes.items():
+        for nombre in info['nombres']:
+            query_base = query_base.replace(nombre, '').strip()
+    for tamaño in tamaños_variantes:
+        query_base = query_base.replace(tamaño, '').strip()
+    
+    # PASO 1: Buscar el artículo principal en Wikipedia
     try:
         wikipedia.set_lang('en')
-        resultados_wiki_en = wikipedia.search(f"{query} coin", results=5)
+        resultados_wiki = wikipedia.search(f"{query} coin", results=3)
         
-        for titulo in resultados_wiki_en:
-            try:
-                titulo_lower = titulo.lower()
-                
-                # Debe contener palabras numismáticas
-                if not any(palabra in titulo_lower for palabra in palabras_coin):
-                    continue
-                
-                pagina = wikipedia.page(titulo, auto_suggest=False)
-                
-                # Verificar que el contenido sea relevante
-                contenido_lower = pagina.summary[:500].lower()
-                if not any(palabra in contenido_lower for palabra in ['coin', 'mint', 'currency', 'bullion', 'silver', 'gold']):
-                    continue
-                
-                # Si hay metal específico, PRIORIZAR pero no descartar
-                tiene_metal = False
-                if metal_buscado:
-                    tiene_metal = metal_buscado in titulo_lower or metal_buscado in contenido_lower or \
-                                 any(var in titulo_lower or var in contenido_lower for var in metales[metal_buscado])
-                
-                # Obtener mejor imagen - buscar específicamente la moneda
-                imagen_url = None
-                if pagina.images:
-                    # Extraer palabras clave del título de la moneda
-                    titulo_words = titulo_lower.replace('coin', '').replace('(', '').replace(')', '').split()
+        articulo_principal = None
+        for titulo in resultados_wiki:
+            titulo_lower = titulo.lower()
+            if any(palabra in titulo_lower for palabra in palabras_coin):
+                try:
+                    pagina = wikipedia.page(titulo, auto_suggest=False)
+                    contenido = pagina.summary[:800].lower()
                     
-                    # Primera pasada: buscar imágenes con el nombre de la moneda
-                    for img in pagina.images[:10]:
-                        img_lower = img.lower()
-                        # Evitar logos, flags, etc
-                        if any(skip in img_lower for skip in ['.svg', 'logo', 'icon', 'flag', 'coat', 'emblem', 'arms']):
-                            continue
-                        # Buscar el nombre de la moneda en el filename de la imagen
-                        if any(word in img_lower for word in titulo_words if len(word) > 3):
-                            imagen_url = img
+                    # Verificar que sea numismático
+                    if any(p in contenido for p in ['coin', 'mint', 'bullion', 'currency']):
+                        articulo_principal = pagina
+                        break
+                except:
+                    continue
+        
+        if articulo_principal:
+            # PASO 2: GENERAR VARIANTES desde el mismo artículo
+            contenido_completo = articulo_principal.content.lower()
+            
+            # Detectar qué metales/tamaños menciona el artículo
+            metales_encontrados = []
+            for metal, info in metales_variantes.items():
+                if any(nombre in contenido_completo for nombre in info['nombres']):
+                    metales_encontrados.append(metal)
+            
+            tamaños_encontrados = []
+            for tamaño in tamaños_variantes:
+                if tamaño in contenido_completo:
+                    tamaños_encontrados.append(tamaño)
+            
+            # Si no hay tamaños específicos, usar genérico
+            if not tamaños_encontrados:
+                tamaños_encontrados = ['estándar']
+            
+            # Obtener imágenes del artículo
+            imagenes_disponibles = []
+            if articulo_principal.images:
+                titulo_words = articulo_principal.title.lower().replace('coin', '').split()
+                
+                for img in articulo_principal.images[:15]:
+                    img_lower = img.lower()
+                    if any(skip in img_lower for skip in ['.svg', 'logo', 'icon', 'flag', 'coat', 'emblem']):
+                        continue
+                    
+                    # Determinar qué metal podría ser esta imagen
+                    metal_img = None
+                    for metal, info in metales_variantes.items():
+                        if any(nombre in img_lower for nombre in info['nombres']) or info['simbolo'].lower() in img_lower:
+                            metal_img = metal
                             break
                     
-                    # Segunda pasada: palabras clave genéricas de monedas
-                    if not imagen_url:
-                        for img in pagina.images[:10]:
-                            img_lower = img.lower()
-                            if any(skip in img_lower for skip in ['.svg', 'logo', 'icon', 'flag', 'coat']):
-                                continue
-                            if any(word in img_lower for word in ['obverse', 'reverse', 'coin', 'moneda']):
-                                imagen_url = img
-                                break
-                    
-                    # Tercera pasada: cualquier imagen que no sea SVG
-                    if not imagen_url:
-                        for img in pagina.images[:10]:
-                            if '.svg' not in img.lower():
-                                imagen_url = img
-                                break
-                
-                candidato = {
-                    'titulo': pagina.title,
-                    'resumen': pagina.summary[:300] + "...",
-                    'fuente': 'Wikipedia (EN)',
-                    'imagen_url': imagen_url,
-                    'url': pagina.url,
-                    'score': 10 if tiene_metal else 5  # Score para ordenar
-                }
-                candidatos.append(candidato)
-                
-                if len(candidatos) >= 4:
-                    break
-                    
-            except:
-                continue
-    except:
-        pass
-    
-    # PASO B: DuckDuckGo
-    if len(candidatos) < 3:
-        try:
-            ddgs = DDGS()
-            query_ddg = f"{query} coin specifications"
-            resultados_ddg = ddgs.text(query_ddg, region='wt-wt', max_results=4)
+                    # Priorizar imágenes con el nombre de la moneda
+                    if any(word in img_lower for word in titulo_words if len(word) > 3):
+                        imagenes_disponibles.append({'url': img, 'metal': metal_img, 'score': 10})
+                    elif any(word in img_lower for word in ['obverse', 'reverse', 'coin']):
+                        imagenes_disponibles.append({'url': img, 'metal': metal_img, 'score': 5})
             
-            for resultado in resultados_ddg:
-                titulo = resultado.get('title', '')
-                body = resultado.get('body', '')
-                
-                texto_completo = (titulo + ' ' + body).lower()
-                if any(palabra in texto_completo for palabra in palabras_coin):
-                    tiene_metal = False
-                    if metal_buscado:
-                        tiene_metal = metal_buscado in texto_completo or \
-                                     any(var in texto_completo for var in metales[metal_buscado])
+            # GENERAR CANDIDATO PARA CADA METAL × TAMAÑO
+            variantes_generadas = 0
+            
+            # Priorizar el metal buscado
+            metales_orden = []
+            if metal_principal and metal_principal in metales_encontrados:
+                metales_orden.append(metal_principal)
+            for metal in metales_encontrados:
+                if metal not in metales_orden:
+                    metales_orden.append(metal)
+            
+            for metal in metales_orden[:3]:  # Máximo 3 metales
+                for tamaño in tamaños_encontrados[:2]:  # Máximo 2 tamaños por metal
+                    if variantes_generadas >= 4:
+                        break
+                    
+                    # Buscar imagen apropiada para este metal
+                    imagen_variante = None
+                    for img_data in imagenes_disponibles:
+                        if img_data['metal'] == metal:
+                            imagen_variante = img_data['url']
+                            break
+                    
+                    # Si no hay imagen específica del metal, usar la primera disponible
+                    if not imagen_variante and imagenes_disponibles:
+                        imagen_variante = imagenes_disponibles[0]['url']
+                    
+                    # Construir título de variante
+                    info_metal = metales_variantes[metal]
+                    titulo_variante = f"{articulo_principal.title}"
+                    detalle_variante = f"{info_metal['color']} {info_metal['nombres'][0].title()}"
+                    if tamaño != 'estándar':
+                        detalle_variante += f" - {tamaño}"
+                    
+                    # Resumen adaptado
+                    resumen_base = articulo_principal.summary[:200]
+                    resumen_variante = f"**{detalle_variante}**\n\n{resumen_base}..."
                     
                     candidatos.append({
-                        'titulo': titulo,
-                        'resumen': body[:300],
-                        'fuente': 'Web',
-                        'imagen_url': None,
-                        'url': resultado.get('href', '#'),
-                        'score': 10 if tiene_metal else 5
+                        'titulo': titulo_variante,
+                        'resumen': resumen_variante,
+                        'fuente': 'Wikipedia (EN)',
+                        'imagen_url': imagen_variante,
+                        'url': articulo_principal.url,
+                        'score': 10 if metal == metal_principal else 5
                     })
                     
-                    if len(candidatos) >= 4:
-                        break
-        except:
-            pass
+                    variantes_generadas += 1
+                    
+                if variantes_generadas >= 4:
+                    break
     
-    # Ordenar por score (metal específico primero) y eliminar el score del resultado
+    except Exception as e:
+        st.warning(f"Error en búsqueda: {str(e)}")
+    
+    # Ordenar por score (metal prioritario primero)
     candidatos_sorted = sorted(candidatos, key=lambda x: x.get('score', 0), reverse=True)
     for c in candidatos_sorted:
         c.pop('score', None)
