@@ -920,7 +920,7 @@ else:
         )
         
         # Botón de guardar
-        submitted = st.form_submit_button("💾 Guardar", width="stretch")
+        submitted = st.form_submit_button("💾 Guardar", use_container_width=True)
         
         if submitted:
             # Validar campos
