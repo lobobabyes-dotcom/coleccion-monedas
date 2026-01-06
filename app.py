@@ -1464,7 +1464,7 @@ with tab1:
                             foto_url = moneda.get('Foto')
                             if foto_url and pd.notna(foto_url):
                                 try:
-                                    st.image("https://via.placeholder.com/300x300.png?text=Moneda", use_container_width=True)
+                                    st.image(foto_url, use_container_width=True)
                                 except:
                                     st.image("https://via.placeholder.com/300x300.png?text=Moneda", use_container_width=True)
                             else:
