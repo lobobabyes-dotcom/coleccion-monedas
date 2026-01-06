@@ -1276,7 +1276,9 @@ def mostrar_ficha_tecnica(moneda):
     # Encabezado con nombre, bandera y año
     pais = str(moneda.get('País', 'Desconocido'))
     bandera = banderas.get(pais, '🌍')
-    st.markdown(f"## {bandera} {moneda.get('Nombre', 'Sin nombre')} ({moneda.get('Año', 'N/A')})")
+    nombre = moneda.get('Nombre de la Moneda', 'Sin nombre')
+    año = moneda.get('Año', 'N/A')
+    st.markdown(f"## {bandera} {nombre} ({año})")
     
     # Fila 1: Métricas Físicas
     col1, col2, col3, col4 = st.columns(4)
@@ -1401,7 +1403,7 @@ def mostrar_ficha_tecnica(moneda):
     st.caption("Consulta precios basados en ventas reales finalizadas")
     
     # Construir término de búsqueda
-    nombre = moneda.get('Nombre', '')
+    nombre = moneda.get('Nombre de la Moneda', '')
     año = moneda.get('Año', '')
     pais = moneda.get('País', '')
     termino_busqueda = f"{nombre} {año} {pais} coin"
@@ -1760,11 +1762,14 @@ with tab1:
                                 st.image("https://via.placeholder.com/300x300.png?text=Moneda", use_column_width=True)
                             
                             # Nombre y año
-                            st.markdown(f"**{moneda.get('Nombre', 'Sin nombre')}**")
-                            st.caption(f"Año: {moneda.get('Año', 'N/A')} | {moneda.get('País', 'N/D')}")
+                            nombre = moneda.get('Nombre de la Moneda', 'Sin nombre')
+                            año = moneda.get('Año', 'N/A')
+                            pais = moneda.get('País', 'N/D')
+                            st.markdown(f"**{nombre}**")
+                            st.caption(f"Año: {año} | {pais}")
                             
                             # Botón para ver ficha completa
-                            if st.button(f"📜 Ver Ficha Completa", key=f"ficha_{idx}_{moneda.get('Nombre', '')}_{moneda.get('Año', '')}"):
+                            if st.button(f"📜 Ver Ficha Completa", key=f"ficha_{idx}_{nombre}_{año}"):
                                 st.session_state[f'mostrar_ficha_{idx}'] = True
                             
                             # Mostrar ficha si se clickeó
