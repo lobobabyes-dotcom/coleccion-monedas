@@ -155,75 +155,98 @@ def crear_referencia_catalogo(nombre, pais, anio, material, peso_gramos, diametr
 
 # Función para obtener precios de mercado en tiempo real
 def obtener_precios_mercado():
+    """
+    Obtiene precios de oro y plata desde Yahoo Finance.
+    Si falla (común en Streamlit Cloud), usa valores de respaldo razonables.
+    """
+    # Valores de respaldo (actualizados manualmente de forma periódica)
+    # Basados en precios promedio de mercado Jan 2026
+    FALLBACK_PRICES = {
+        'oro_usd_onza': 2650.00,  # ~$2650/oz es un precio razonable para oro
+        'plata_usd_onza': 30.50,  # ~$30/oz es un precio razonable para plata
+        'eur_usd_rate': 1.10
+    }
+    
     try:
         import json
-        # Obtener datos de Yahoo Finance con manejo robusto de errores
+        # Intentar obtener datos de Yahoo Finance
         try:
             oro = yf.Ticker('GC=F')  # Futuros de Oro
             plata = yf.Ticker('SI=F')  # Futuros de Plata
-        except json.JSONDecodeError:
-            # API devolvió respuesta inválida
-            return None, "API de Yahoo Finance no disponible temporalmente"
-        except Exception as e:
-            return None, f"Error al conectar con Yahoo Finance: {str(e)}"
-        
-        # Intentar diferentes símbolos para EUR/USD
-        try:
-            eur_usd = yf.Ticker('EURUSD=X')  # Intentar este primero
-            tasa_cambio = eur_usd.fast_info.get('lastPrice', eur_usd.info.get('regularMarketPrice', 0))
-        except:
-            try:
-                eur_usd = yf.Ticker('EUR=X')  # Fallback
-                tasa_cambio = eur_usd.fast_info.get('lastPrice', eur_usd.info.get('regularMarketPrice', 0))
-            except:
-                tasa_cambio = 1.10  # Valor por defecto si falla todo
-        
-        # Extraer precios actuales (en USD por onza troy)
-        try:
-            precio_oro_usd = oro.fast_info.get('lastPrice', oro.info.get('regularMarketPrice', 0))
-            precio_plata_usd = plata.fast_info.get('lastPrice', plata.info.get('regularMarketPrice', 0))
-        except:
-            # Si fast_info falla, intentar con info
-            try:
+            
+            # Extraer precios
+            precio_oro_usd = oro.fast_info.get('lastPrice', 0)
+            precio_plata_usd = plata.fast_info.get('lastPrice', 0)
+            
+            # Si no hay precio en fast_info, intentar con info
+            if precio_oro_usd == 0:
                 precio_oro_usd = oro.info.get('regularMarketPrice', 0)
+            if precio_plata_usd == 0:
                 precio_plata_usd = plata.info.get('regularMarketPrice', 0)
-            except:
-                return None, "No se pudieron obtener precios de oro y plata"
+                
+        except (json.JSONDecodeError, Exception):
+            # Si falla yfinance, usar valores de respaldo
+            precio_oro_usd = FALLBACK_PRICES['oro_usd_onza']
+            precio_plata_usd = FALLBACK_PRICES['plata_usd_onza']
         
-        # Validación: si la tasa está muy baja, probablemente está invertida
-        # Normalmente 1 EUR = 1.05-1.15 USD
+        # Validar que tenemos precios válidos
+        if precio_oro_usd == 0 or precio_plata_usd == 0:
+            precio_oro_usd = FALLBACK_PRICES['oro_usd_onza']
+            precio_plata_usd = FALLBACK_PRICES['plata_usd_onza']
+        
+        # Obtener tasa EUR/USD
+        try:
+            eur_usd = yf.Ticker('EURUSD=X')
+            tasa_cambio = eur_usd.fast_info.get('lastPrice', 0)
+            if tasa_cambio == 0:
+                eur_usd = yf.Ticker('EUR=X')
+                tasa_cambio = eur_usd.fast_info.get('lastPrice', 0)
+        except:
+            tasa_cambio = 0
+        
+        # Validar y ajustar tasa de cambio
         if tasa_cambio < 1.0 and tasa_cambio > 0:
-            # Está invertida (USD/EUR en lugar de EUR/USD), invertir
             tasa_cambio = 1 / tasa_cambio
         
-        # Si aún no tenemos una tasa válida, usar valor por defecto
         if tasa_cambio <= 0 or tasa_cambio > 2.0:
-            tasa_cambio = 1.10  # Valor típico
+            tasa_cambio = FALLBACK_PRICES['eur_usd_rate']
         
         # Convertir de USD/onza troy a EUR/gramo
         # 1 onza troy = 31.1035 gramos
-        # Para convertir USD a EUR: dividir por tasa_cambio (cuántos USD vale 1 EUR)
+        oro_gramo_eur = (precio_oro_usd / tasa_cambio) / 31.1035
+        plata_gramo_eur = (precio_plata_usd / tasa_cambio) / 31.1035
         
-        oro_gramo_eur = (precio_oro_usd / tasa_cambio) / 31.1035 if precio_oro_usd > 0 and tasa_cambio > 0 else 0
-        plata_gramo_eur = (precio_plata_usd / tasa_cambio) / 31.1035 if precio_plata_usd > 0 and tasa_cambio > 0 else 0
-        
-        # Validar que los precios son razonables
-        if oro_gramo_eur == 0 or plata_gramo_eur == 0:
-            return None, "Precios no disponibles en este momento"
+        # Verificar si estamos usando valores de respaldo
+        usando_fallback = (precio_oro_usd == FALLBACK_PRICES['oro_usd_onza'])
         
         return {
             'oro_gramo': oro_gramo_eur,
             'plata_gramo': plata_gramo_eur,
             'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            # Debug info
             'oro_usd_onza': precio_oro_usd,
             'plata_usd_onza': precio_plata_usd,
-            'eur_usd_rate': tasa_cambio
+            'eur_usd_rate': tasa_cambio,
+            'usando_fallback': usando_fallback
         }, None
-    except json.JSONDecodeError as e:
-        return None, "Error de formato en respuesta de la API"
+        
     except Exception as e:
-        return None, str(e)
+        # Si todo falla, usar valores de respaldo
+        tasa_cambio = FALLBACK_PRICES['eur_usd_rate']
+        precio_oro_usd = FALLBACK_PRICES['oro_usd_onza']
+        precio_plata_usd = FALLBACK_PRICES['plata_usd_onza']
+        
+        oro_gramo_eur = (precio_oro_usd / tasa_cambio) / 31.1035
+        plata_gramo_eur = (precio_plata_usd / tasa_cambio) / 31.1035
+        
+        return {
+            'oro_gramo': oro_gramo_eur,
+            'plata_gramo': plata_gramo_eur,
+            'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+            'oro_usd_onza': precio_oro_usd,
+            'plata_usd_onza': precio_plata_usd,
+            'eur_usd_rate': tasa_cambio,
+            'usando_fallback': True
+        }, None
 
 # ============================================================================
 # CLASE Y FUNCIÓN PARA GENERAR PDF
@@ -872,6 +895,10 @@ if precios_mercado:
         f"€{precios_mercado['plata_gramo']:.2f}/g"
     )
     st.sidebar.caption(f"⌛ {precios_mercado['timestamp']}")
+    
+    # Indicar si se usan precios de respaldo
+    if precios_mercado.get('usando_fallback', False):
+        st.sidebar.info("ℹ️ Precios estimados (Yahoo Finance no disponible)")
     
     # Mostrar información de debug
     with st.sidebar.expander("🔍 Info de conversión"):
