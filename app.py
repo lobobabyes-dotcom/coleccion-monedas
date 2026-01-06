@@ -156,21 +156,39 @@ def crear_referencia_catalogo(nombre, pais, anio, material, peso_gramos, diametr
 # Función para obtener precios de mercado en tiempo real
 def obtener_precios_mercado():
     try:
-        # Obtener datos de Yahoo Finance
-        oro = yf.Ticker('GC=F')  # Futuros de Oro
-        plata = yf.Ticker('SI=F')  # Futuros de Plata
+        import json
+        # Obtener datos de Yahoo Finance con manejo robusto de errores
+        try:
+            oro = yf.Ticker('GC=F')  # Futuros de Oro
+            plata = yf.Ticker('SI=F')  # Futuros de Plata
+        except json.JSONDecodeError:
+            # API devolvió respuesta inválida
+            return None, "API de Yahoo Finance no disponible temporalmente"
+        except Exception as e:
+            return None, f"Error al conectar con Yahoo Finance: {str(e)}"
         
         # Intentar diferentes símbolos para EUR/USD
         try:
             eur_usd = yf.Ticker('EURUSD=X')  # Intentar este primero
             tasa_cambio = eur_usd.fast_info.get('lastPrice', eur_usd.info.get('regularMarketPrice', 0))
         except:
-            eur_usd = yf.Ticker('EUR=X')  # Fallback
-            tasa_cambio = eur_usd.fast_info.get('lastPrice', eur_usd.info.get('regularMarketPrice', 0))
+            try:
+                eur_usd = yf.Ticker('EUR=X')  # Fallback
+                tasa_cambio = eur_usd.fast_info.get('lastPrice', eur_usd.info.get('regularMarketPrice', 0))
+            except:
+                tasa_cambio = 1.10  # Valor por defecto si falla todo
         
         # Extraer precios actuales (en USD por onza troy)
-        precio_oro_usd = oro.fast_info.get('lastPrice', oro.info.get('regularMarketPrice', 0))
-        precio_plata_usd = plata.fast_info.get('lastPrice', plata.info.get('regularMarketPrice', 0))
+        try:
+            precio_oro_usd = oro.fast_info.get('lastPrice', oro.info.get('regularMarketPrice', 0))
+            precio_plata_usd = plata.fast_info.get('lastPrice', plata.info.get('regularMarketPrice', 0))
+        except:
+            # Si fast_info falla, intentar con info
+            try:
+                precio_oro_usd = oro.info.get('regularMarketPrice', 0)
+                precio_plata_usd = plata.info.get('regularMarketPrice', 0)
+            except:
+                return None, "No se pudieron obtener precios de oro y plata"
         
         # Validación: si la tasa está muy baja, probablemente está invertida
         # Normalmente 1 EUR = 1.05-1.15 USD
@@ -189,6 +207,10 @@ def obtener_precios_mercado():
         oro_gramo_eur = (precio_oro_usd / tasa_cambio) / 31.1035 if precio_oro_usd > 0 and tasa_cambio > 0 else 0
         plata_gramo_eur = (precio_plata_usd / tasa_cambio) / 31.1035 if precio_plata_usd > 0 and tasa_cambio > 0 else 0
         
+        # Validar que los precios son razonables
+        if oro_gramo_eur == 0 or plata_gramo_eur == 0:
+            return None, "Precios no disponibles en este momento"
+        
         return {
             'oro_gramo': oro_gramo_eur,
             'plata_gramo': plata_gramo_eur,
@@ -198,6 +220,8 @@ def obtener_precios_mercado():
             'plata_usd_onza': precio_plata_usd,
             'eur_usd_rate': tasa_cambio
         }, None
+    except json.JSONDecodeError as e:
+        return None, "Error de formato en respuesta de la API"
     except Exception as e:
         return None, str(e)
 
