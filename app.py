@@ -7,6 +7,10 @@ from datetime import datetime
 from fpdf import FPDF
 import wikipedia
 from duckduckgo_search import DDGS
+import requests
+from bs4 import BeautifulSoup
+import urllib.parse
+import re
 
 # Configuración de la página
 st.set_page_config(
@@ -247,6 +251,136 @@ def obtener_precios_mercado():
             'eur_usd_rate': tasa_cambio,
             'usando_fallback': True
         }, None
+
+# ============================================================================
+# SCRAPER DE PRECIOS REALES - EBAY SOLD LISTINGS
+# ============================================================================
+
+def obtener_precio_mercado_real(termino_busqueda):
+    """
+    Obtiene precios reales de mercado desde eBay (solo ventas finalizadas).
+    
+    Args:
+        termino_busqueda (str): Término de búsqueda (ej: "Libertad 2023 Mexico")
+    
+    Returns:
+        dict: {
+            'precio_medio': float,
+            'precio_mediano': float,
+            'num_ventas': int,
+            'rango_min': float,
+            'rango_max': float,
+            'moneda': str,
+            'fecha_consulta': str
+        } o None si falla
+    """
+    try:
+        # Construir URL de eBay con filtros de sold listings
+        termino_encoded = urllib.parse.quote(termino_busqueda)
+        url = f"https://www.ebay.com/sch/i.html?_nkw={termino_encoded}&LH_Sold=1&LH_Complete=1&_ipg=60"
+        
+        # Headers para evitar bloqueo
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        }
+        
+        # Hacer request con timeout
+        response = requests.get(url, headers=headers, timeout=10)
+        response.raise_for_status()
+        
+        # Parsear HTML
+        soup = BeautifulSoup(response.content, 'html.parser')
+        
+        # Buscar elementos de precio
+        price_elements = soup.find_all('span', class_='s-item__price')
+        
+        if not price_elements or len(price_elements) < 3:
+            return None  # No hay suficientes resultados
+        
+        # Extraer y limpiar precios
+        precios = []
+        moneda_detectada = None
+        
+        for elem in price_elements[:30]:  # Limitar a primeros 30
+            price_text = elem.get_text(strip=True)
+            
+            # Detectar moneda
+            if not moneda_detectada:
+                if '€' in price_text or 'EUR' in price_text:
+                    moneda_detectada = 'EUR'
+                elif '$' in price_text or 'USD' in price_text:
+                    moneda_detectada = 'USD'
+                elif '£' in price_text or 'GBP' in price_text:
+                    moneda_detectada = 'GBP'
+            
+            # Limpiar texto y extraer número
+            price_clean = re.sub(r'[^\d,.\s]', '', price_text)
+            price_clean = price_clean.replace(' ', '').strip()
+            
+            # Manejar diferentes formatos (europeo vs americano)
+            try:
+                if ',' in price_clean and '.' in price_clean:
+                    # Determinar cuál es el separador decimal
+                    if price_clean.rindex(',') > price_clean.rindex('.'):
+                        # Formato europeo (1.234,56)
+                        price_clean = price_clean.replace('.', '').replace(',', '.')
+                    else:
+                        # Formato americano (1,234.56)
+                        price_clean = price_clean.replace(',', '')
+                elif ',' in price_clean:
+                    # Solo comas
+                    if price_clean.count(',') == 1 and len(price_clean.split(',')[1]) == 2:
+                        price_clean = price_clean.replace(',', '.')
+                    else:
+                        price_clean = price_clean.replace(',', '')
+                
+                precio_float = float(price_clean)
+                
+                # Validar rango razonable
+                if 0.01 <= precio_float <= 1000000:
+                    precios.append(precio_float)
+            except (ValueError, IndexError):
+                continue
+        
+        if len(precios) < 3:
+            return None
+        
+        # Filtrar outliers (top/bottom 10%)
+        precios_sorted = sorted(precios)
+        n = len(precios_sorted)
+        if n >= 10:
+            corte = int(n * 0.1)
+            precios_filtrados = precios_sorted[corte:-corte] if corte > 0 else precios_sorted
+        else:
+            precios_filtrados = precios_sorted
+        
+        # Calcular estadísticas
+        import statistics
+        
+
+        precio_medio = statistics.mean(precios_filtrados)
+        precio_mediano = statistics.median(precios_filtrados)
+        rango_min = min(precios_filtrados)
+        rango_max = max(precios_filtrados)
+        
+        return {
+            'precio_medio': round(precio_medio, 2),
+            'precio_mediano': round(precio_mediano, 2),
+            'num_ventas': len(precios_filtrados),
+            'rango_min': round(rango_min, 2),
+            'rango_max': round(rango_max, 2),
+            'moneda': moneda_detectada or 'USD',
+            'fecha_consulta': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+    except requests.Timeout:
+        return None
+    except requests.RequestException:
+        return None
+    except Exception as e:
+        return None
 
 # ============================================================================
 # CLASE Y FUNCIÓN PARA GENERAR PDF
@@ -1260,6 +1394,110 @@ def mostrar_ficha_tecnica(moneda):
     with col_comp3:
         estado = moneda.get('Estado', 'N/D')
         st.metric("🏅 Estado", estado)
+    
+    # Sección de Análisis de Mercado Real
+    st.markdown("---")
+    st.markdown("### 💰 Análisis de Mercado Real")
+    st.caption("Consulta precios basados en ventas reales finalizadas")
+    
+    # Construir término de búsqueda
+    nombre = moneda.get('Nombre', '')
+    año = moneda.get('Año', '')
+    pais = moneda.get('País', '')
+    termino_busqueda = f"{nombre} {año} {pais} coin"
+    
+    # Key único para session state
+    key_precio = f"precio_ebay_{nombre}_{año}".replace(' ', '_')
+    
+    col_btn, col_info = st.columns([1, 2])
+    
+    with col_btn:
+        if st.button("🔄 Consultar eBay", key=f"btn_{key_precio}", use_container_width=True):
+            with st.spinner("Analizando ventas finalizadas recientes..."):
+                resultado = obtener_precio_mercado_real(termino_busqueda)
+                if resultado:
+                    st.session_state[key_precio] = resultado
+                else:
+                    st.session_state[key_precio] = "error"
+    
+    with col_info:
+        if key_precio in st.session_state:
+            resultado = st.session_state[key_precio]
+            
+            if resultado == "error":
+                st.error("❌ No se encontraron ventas o eBay bloqueó la consulta")
+            else:
+                # Mostrar resultados
+                st.success(f"✅ {resultado['num_ventas']} ventas analizadas")
+    
+    # Mostrar métricas si hay datos
+    if key_precio in st.session_state and st.session_state[key_precio] != "error":
+        resultado = st.session_state[key_precio]
+        
+        col_m1, col_m2, col_m3 = st.columns(3)
+        
+        with col_m1:
+            simbolo = '€' if resultado['moneda'] == 'EUR' else '$' if resultado['moneda'] == 'USD' else '£'
+            st.metric(
+                "💵 Precio Medio de Venta",
+                f"{simbolo}{resultado['precio_medio']:,.2f}",
+                help="Promedio de ventas finalizadas"
+            )
+        
+        with col_m2:
+            st.metric(
+                "📊 Precio Mediano",
+                f"{simbolo}{resultado['precio_mediano']:,.2f}",
+                help="Valor central (más robusto que la media)"
+            )
+        
+        with col_m3:
+            rango = f"{simbolo}{resultado['rango_min']:,.2f} - {simbolo}{resultado['rango_max']:,.2f}"
+            st.metric(
+                "📈 Rango de Precios",
+                rango,
+                help="Mínimo y máximo observados"
+            )
+        
+        st.caption(f"🕐 Última consulta: {resultado['fecha_consulta']}")
+        st.warning("⚠️ **Advertencia**: Estos datos provienen de ventas no certificadas en eBay. Úsalos como referencia orientativa.")
+    
+    # Enlaces de Verificación Premium
+    st.markdown("---")
+    st.markdown("### 🔗 Enlaces de Verificación Premium")
+    st.caption("Consulta ventas certificadas en casas de subastas profesionales:")
+    
+    # Encodear nombre para URLs
+    search_term = urllib.parse.quote(f"{nombre} {año}")
+    
+    col_link1, col_link2, col_link3 = st.columns(3)
+    
+    with col_link1:
+        acsearch_url = f"https://www.acsearch.info/search.html?term={search_term}"
+        st.link_button(
+            "🏛️ Acsearch",
+            acsearch_url,
+            use_container_width=True,
+            help="Archivo de subastas numismáticas"
+        )
+    
+    with col_link2:
+        sixbid_url = f"https://www.sixbid.com/browse.html?auction=all&search={search_term}"
+        st.link_button(
+            "⚖️ Sixbid",
+            sixbid_url,
+            use_container_width=True,
+            help="Plataforma de subastas europea"
+        )
+    
+    with col_link3:
+        heritage_url = f"https://www.ha.com/c/search.zx?N=0&Ntt={search_term}"
+        st.link_button(
+            "🎖️ Heritage",
+            heritage_url,
+            use_container_width=True,
+            help="Casa de subastas premium"
+        )
 
 
 # ============================================================================
