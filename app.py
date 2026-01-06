@@ -5,6 +5,8 @@ import plotly.express as px
 import yfinance as yf
 from datetime import datetime
 from fpdf import FPDF
+import wikipedia
+from duckduckgo_search import DDGS
 
 # Configuración de la página
 st.set_page_config(
@@ -110,7 +112,7 @@ def añadir_moneda(id_moneda, fecha_compra, precio_compra, estado):
 
 
 # Función para añadir una nueva moneda al catálogo maestro
-def crear_referencia_catalogo(nombre, pais, anio, material, peso_gramos, diametro_mm, foto_url=None):
+def crear_referencia_catalogo(nombre, pais, anio, material, peso_gramos, diametro_mm, foto_url=None, origen_web=False):
     conexion, error = conectar_bd()
     if conexion is None:
         return False, error
@@ -126,7 +128,7 @@ def crear_referencia_catalogo(nombre, pais, anio, material, peso_gramos, diametr
         # Insertar nueva referencia en el catálogo
         query_insert = """
             INSERT INTO catalogo_maestro 
-            (id_moneda, nombre, pais, anio, material, peso_gramos, diametro_mm, foto_generica_url)
+            (id_moneda, nombre, pais, anio, material, peso_gramos, diametro_mm, foto_generica_url, popularidad, origen_web)
             VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
         """
         
@@ -662,6 +664,151 @@ def rechazar_solicitud(id_solicitud):
             except:
                 pass
         return False, str(e)
+
+# ============================================================================
+# BÚSQUEDA WEB ASISTIDA
+# ============================================================================
+
+def buscar_candidatos_web(query):
+    """
+    Búsqueda híbrida mejorada con priorización de términos exactos
+    Metal específico aumenta prioridad pero no descarta resultados
+    """
+    candidatos = []
+    
+    # Palabras clave numismáticas para filtrar
+    palabras_coin = ['moneda', 'coin', 'numismatic', 'mint', 'currency', 'onza', 'dólar', 'peso', 'real', 'denario']
+    
+    # Detectar metales específicos en la query (para priorizar, no filtrar)
+    metales = {
+        'silver': ['silver', 'plata', 'ag'],
+        'gold': ['gold', 'oro', 'au'],
+        'copper': ['copper', 'cobre', 'cu']
+    }
+    
+    metal_buscado = None
+    query_lower = query.lower()
+    for metal, variantes in metales.items():
+        if any(var in query_lower for var in variantes):
+            metal_buscado = metal
+            break
+    
+    # PASO A: Wikipedia EN INGLÉS
+    try:
+        wikipedia.set_lang('en')
+        resultados_wiki_en = wikipedia.search(f"{query} coin", results=5)
+        
+        for titulo in resultados_wiki_en:
+            try:
+                titulo_lower = titulo.lower()
+                
+                # Debe contener palabras numismáticas
+                if not any(palabra in titulo_lower for palabra in palabras_coin):
+                    continue
+                
+                pagina = wikipedia.page(titulo, auto_suggest=False)
+                
+                # Verificar que el contenido sea relevante
+                contenido_lower = pagina.summary[:500].lower()
+                if not any(palabra in contenido_lower for palabra in ['coin', 'mint', 'currency', 'bullion', 'silver', 'gold']):
+                    continue
+                
+                # Si hay metal específico, PRIORIZAR pero no descartar
+                tiene_metal = False
+                if metal_buscado:
+                    tiene_metal = metal_buscado in titulo_lower or metal_buscado in contenido_lower or \
+                                 any(var in titulo_lower or var in contenido_lower for var in metales[metal_buscado])
+                
+                # Obtener mejor imagen - buscar específicamente la moneda
+                imagen_url = None
+                if pagina.images:
+                    # Extraer palabras clave del título de la moneda
+                    titulo_words = titulo_lower.replace('coin', '').replace('(', '').replace(')', '').split()
+                    
+                    # Primera pasada: buscar imágenes con el nombre de la moneda
+                    for img in pagina.images[:10]:
+                        img_lower = img.lower()
+                        # Evitar logos, flags, etc
+                        if any(skip in img_lower for skip in ['.svg', 'logo', 'icon', 'flag', 'coat', 'emblem', 'arms']):
+                            continue
+                        # Buscar el nombre de la moneda en el filename de la imagen
+                        if any(word in img_lower for word in titulo_words if len(word) > 3):
+                            imagen_url = img
+                            break
+                    
+                    # Segunda pasada: palabras clave genéricas de monedas
+                    if not imagen_url:
+                        for img in pagina.images[:10]:
+                            img_lower = img.lower()
+                            if any(skip in img_lower for skip in ['.svg', 'logo', 'icon', 'flag', 'coat']):
+                                continue
+                            if any(word in img_lower for word in ['obverse', 'reverse', 'coin', 'moneda']):
+                                imagen_url = img
+                                break
+                    
+                    # Tercera pasada: cualquier imagen que no sea SVG
+                    if not imagen_url:
+                        for img in pagina.images[:10]:
+                            if '.svg' not in img.lower():
+                                imagen_url = img
+                                break
+                
+                candidato = {
+                    'titulo': pagina.title,
+                    'resumen': pagina.summary[:300] + "...",
+                    'fuente': 'Wikipedia (EN)',
+                    'imagen_url': imagen_url,
+                    'url': pagina.url,
+                    'score': 10 if tiene_metal else 5  # Score para ordenar
+                }
+                candidatos.append(candidato)
+                
+                if len(candidatos) >= 4:
+                    break
+                    
+            except:
+                continue
+    except:
+        pass
+    
+    # PASO B: DuckDuckGo
+    if len(candidatos) < 3:
+        try:
+            ddgs = DDGS()
+            query_ddg = f"{query} coin specifications"
+            resultados_ddg = ddgs.text(query_ddg, region='wt-wt', max_results=4)
+            
+            for resultado in resultados_ddg:
+                titulo = resultado.get('title', '')
+                body = resultado.get('body', '')
+                
+                texto_completo = (titulo + ' ' + body).lower()
+                if any(palabra in texto_completo for palabra in palabras_coin):
+                    tiene_metal = False
+                    if metal_buscado:
+                        tiene_metal = metal_buscado in texto_completo or \
+                                     any(var in texto_completo for var in metales[metal_buscado])
+                    
+                    candidatos.append({
+                        'titulo': titulo,
+                        'resumen': body[:300],
+                        'fuente': 'Web',
+                        'imagen_url': None,
+                        'url': resultado.get('href', '#'),
+                        'score': 10 if tiene_metal else 5
+                    })
+                    
+                    if len(candidatos) >= 4:
+                        break
+        except:
+            pass
+    
+    # Ordenar por score (metal específico primero) y eliminar el score del resultado
+    candidatos_sorted = sorted(candidatos, key=lambda x: x.get('score', 0), reverse=True)
+    for c in candidatos_sorted:
+        c.pop('score', None)
+    
+    return candidatos_sorted
 
 
 # ============================================================================
@@ -1544,6 +1691,176 @@ with tab2:
                     st.error(f"❌ Error al crear la referencia: {error}")
     
     st.markdown("---")
+    
+    # ============================================================================
+    # BÚSQUEDA WEB ASISTIDA
+    # ============================================================================
+    st.markdown("---")
+    st.subheader("🔍 Búsqueda Asistida de Monedas")
+    st.caption("Si no encuentras una moneda, búscala en internet y la añadimos al catálogo")
+    
+    col_busq1, col_busq2 = st.columns([3, 1])
+    
+    with col_busq1:
+        query_web = st.text_input(
+            "Buscar moneda en internet",
+            placeholder="Ej: Onza Libertad 2020, Morgan Dollar 1921, Denario de Nerón...",
+            key="busqueda_web",
+            help="Escribe el nombre de la moneda que buscas"
+        )
+    
+    with col_busq2:
+        buscar_btn = st.button("🌐 Buscar", type="primary", use_container_width=True)
+    
+    # Realizar búsqueda
+    if buscar_btn and query_web:
+        with st.spinner("🔎 Buscando en Wikipedia y web..."):
+            candidatos = buscar_candidatos_web(query_web)
+        
+        if candidatos:
+            st.success(f"✅ Encontrados {len(candidatos)} candidatos")
+            st.markdown("---")
+            st.markdown("### 📋 Resultados de la Búsqueda")
+            st.caption("Haz clic en 'Importar' para añadir la moneda al catálogo")
+            
+            # Mostrar candidatos en tarjetas
+            for idx, candidato in enumerate(candidatos):
+                with st.expander(f"🔖 {candidato['titulo']} ({candidato['fuente']})", expanded=(idx==0)):
+                    col_cand1, col_cand2 = st.columns([2, 3])
+                    
+                    with col_cand1:
+                        # Imagen si está disponible
+                        if candidato.get('imagen_url'):
+                            try:
+                                st.image(candidato['imagen_url'], width=200)
+                            except:
+                                st.info("🖼️ Imagen no disponible")
+                        else:
+                            st.info("🖼️ Sin imagen")
+                        
+                        st.markdown(f"**Fuente**: {candidato['fuente']}")
+                        if candidato.get('url'):
+                            st.markdown(f"[🔗 Ver fuente]({candidato['url']})")
+                    
+                    with col_cand2:
+                        st.markdown("**Resumen:**")
+                        st.write(candidato['resumen'])
+                        
+                        # Botón para importar
+                        if st.button(f"📥 Importar esta moneda", key=f"import_{idx}"):
+                            st.session_state[f'importar_candidato_{idx}'] = candidato
+                            st.rerun()
+                    
+                    # Formulario de importación si se clickeó
+                    if st.session_state.get(f'importar_candidato_{idx}'):
+                        st.markdown("---")
+                        st.markdown("### ✏️ Confirmar Datos de Importación")
+                        
+                        with st.form(f"form_import_{idx}"):
+                            st.info("⚠️ Revisa y corrige los datos antes de guardar")
+                            
+                            col_form1, col_form2 = st.columns(2)
+                            
+                            with col_form1:
+                                nombre_import = st.text_input(
+                                    "Nombre de la Moneda *",
+                                    value=candidato['titulo'],
+                                    key=f"nombre_import_{idx}"
+                                )
+                                
+                                pais_import = st.text_input(
+                                    "País *",
+                                    value="",
+                                    placeholder="Ej: España, México, EE.UU.",
+                                    key=f"pais_import_{idx}"
+                                )
+                                
+                                anio_import = st.number_input(
+                                    "Año *",
+                                    min_value=1,
+                                    max_value=2100,
+                                    value=2020,
+                                    key=f"anio_import_{idx}"
+                                )
+                            
+                            with col_form2:
+                                material_import = st.text_input(
+                                    "Material *",
+                                    value="",
+                                    placeholder="Ej: Plata .999, Oro 24k",
+                                    key=f"material_import_{idx}"
+                                )
+                                
+                                peso_import = st.number_input(
+                                    "Peso (gramos)",
+                                    min_value=0.0,
+                                    value=0.0,
+                                    step=0.01,
+                                    format="%.2f",
+                                    key=f"peso_import_{idx}"
+                                )
+                                
+                                diametro_import = st.number_input(
+                                    "Diámetro (mm)",
+                                    min_value=0.0,
+                                    value=0.0,
+                                    step=0.1,
+                                    format="%.1f",
+                                    key=f"diametro_import_{idx}"
+                                )
+                            
+                            foto_import = candidato.get('imagen_url', '')
+                            
+                            col_submit1, col_submit2 = st.columns([1, 1])
+                            
+                            with col_submit1:
+                                submit_import = st.form_submit_button(
+                                    "💾 Guardar en Catálogo",
+                                    type="primary",
+                                    use_container_width=True
+                                )
+                            
+                            with col_submit2:
+                                cancel_import = st.form_submit_button(
+                                    "❌ Cancelar",
+                                    use_container_width=True
+                                )
+                            
+                            if submit_import:
+                                if not nombre_import or not pais_import or not material_import:
+                                    st.error("⚠️ Completa los campos obligatorios (*)")
+                                else:
+                                    # Guardar en catálogo maestro con origen_web=TRUE
+                                    exito, error = crear_referencia_catalogo(
+                                        nombre_import,
+                                        pais_import,
+                                        anio_import,
+                                        material_import,
+                                        peso_import if peso_import > 0 else None,
+                                        diametro_import if diametro_import > 0 else None,
+                                        foto_import if foto_import else None,
+                                        origen_web=True  # ← Marcar como importada de web
+                                    )
+                                    
+                                    if exito:
+                                        st.success(f"✅ '{nombre_import}' añadida al catálogo!")
+                                        st.balloons()
+                                        # Limpiar session state
+                                        del st.session_state[f'importar_candidato_{idx}']
+                                        import time
+                                        time.sleep(1)
+                                        st.rerun()
+                                    else:
+                                        st.error(f"❌ Error: {error}")
+                            
+                            if cancel_import:
+                                del st.session_state[f'importar_candidato_{idx}']
+                                st.rerun()
+        
+        else:
+            st.warning("🔍 No se encontraron resultados. Intenta con otros términos de búsqueda.")
+            st.info("💡 Sugerencias: Usa el nombre completo de la moneda, incluye el año o el país")
+
     
     # Mostrar catálogo actual
     st.subheader("📖 Catálogo Actual")

@@ -4,3 +4,5 @@ psycopg2-binary==2.9.9
 plotly==5.18.0
 yfinance==0.2.36
 fpdf==1.7.2
+wikipedia==1.4.0
+duckduckgo-search==6.3.5
