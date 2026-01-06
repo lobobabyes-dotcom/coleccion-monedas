@@ -1075,6 +1075,143 @@ st.sidebar.markdown("---")
 st.sidebar.caption("💡 Añade monedas a tu colección desde aquí")
 
 # ============================================================================
+# COMPONENTE: FICHA TÉCNICA DE MONEDA
+# ============================================================================
+
+def mostrar_ficha_tecnica(moneda):
+    """
+    Muestra una ficha técnica completa de una moneda con métricas y rareza
+    """
+    # Mapeo de países a emojis de banderas
+    banderas = {
+        'México': '🇲🇽', 'España': '🇪🇸', 'Estados Unidos': '🇺🇸',
+        'Imperio Romano': '🏛️', 'Imperio Español': '🇪🇸', 'USA': '🇺🇸', 'EE.UU.': '🇺🇸'
+    }
+    
+    # Encabezado con nombre, bandera y año
+    pais = str(moneda.get('País', 'Desconocido'))
+    bandera = banderas.get(pais, '🌍')
+    st.markdown(f"## {bandera} {moneda.get('Nombre', 'Sin nombre')} ({moneda.get('Año', 'N/A')})")
+    
+    # Fila 1: Métricas Físicas
+    col1, col2, col3, col4 = st.columns(4)
+    
+    with col1:
+        # Try multiple column name variations
+        peso = moneda.get('Peso (g)') or moneda.get('peso') or moneda.get('Peso')
+        if peso and peso > 0:
+            st.metric("⚖️ Peso", f"{peso:.2f} g")
+        else:
+            st.metric("⚖️ Peso", "N/D")
+    
+    with col2:
+        # Try multiple column name variations
+        diametro = moneda.get('Diámetro (mm)') or moneda.get('diametro') or moneda.get('Diámetro')
+        if diametro and diametro > 0:
+            st.metric("📏 Diámetro", f"{diametro:.1f} mm")
+        else:
+            st.metric("📏 Diámetro", "N/D")
+    
+    with col3:
+        material = moneda.get('Material', 'N/D')
+        st.metric("🔬 Material", material)
+    
+    with col4:
+        pureza = moneda.get('pureza') or moneda.get('Pureza')
+        if pureza and pureza > 0:
+            st.metric("💎 Pureza", f"{pureza:.3f}")
+        else:
+            st.metric("💎 Pureza", "N/D")
+    
+    st.markdown("---")
+    
+    # Fila 2: Datos Numismáticos
+    col5, col6, col7 = st.columns(3)
+    
+    with col5:
+        ceca = moneda.get('ceca') or moneda.get('Ceca')
+        if ceca:
+            st.markdown(f"**🏛️ Ceca (Casa de Moneda):**  \n{ceca}")
+        else:
+            st.markdown("**🏛️ Ceca:**  \nN/D")
+    
+    with col6:
+        canto = moneda.get('canto') or moneda.get('Canto')
+        if canto:
+            st.markdown(f"**🔄 Canto:**  \n{canto}")
+        else:
+            st.markdown("**🔄 Canto:**  \nN/D")
+    
+    with col7:
+        forma = moneda.get('forma') or moneda.get('Forma') or 'Circular'
+        st.markdown(f"**⭕ Forma:**  \n{forma}")
+
+    
+    st.markdown("---")
+    
+    # Fila 3: Rareza basada en tirada
+    tirada = moneda.get('tirada') or moneda.get('Tirada')
+    if tirada and tirada > 0:
+        st.markdown("### 🎯 Índice de Rareza")
+        
+        if tirada < 50000:
+            rareza_texto = "💎 Extremadamente Rara"
+            rareza_valor = 90
+            rareza_color = "#FF6B6B"  # Rojo
+        elif tirada < 100000:
+            rareza_texto = "🔥 Muy Rara"
+            rareza_valor = 75
+            rareza_color = "#FF922B"  # Naranja
+        elif tirada < 500000:
+            rareza_texto = "⭐ Rara"
+            rareza_valor = 60
+            rareza_color = "#FAB005"  # Amarillo
+        elif tirada < 1000000:
+            rareza_texto = "🌟 Escasa"
+            rareza_valor = 40
+            rareza_color = "#51CF66"  # Verde
+        else:
+            rareza_texto = "🌍 Común"
+            rareza_valor = 20
+            rareza_color = "#74C0FC"  # Azul
+        
+        col_rar1, col_rar2 = st.columns([1, 3])
+        with col_rar1:
+            st.markdown(f"**{rareza_texto}**")
+            st.caption(f"Tirada: {tirada:,} unidades")
+        with col_rar2:
+            st.progress(rareza_valor / 100)
+    else:
+        st.info("ℹ️ Tirada desconocida - No se puede calcular rareza")
+    
+    # Advertencia de datos estimados
+    es_estimacion = moneda.get('es_estimacion', False)
+    if es_estimacion:
+        st.warning("⚠️ **Datos Estimados**: Algunas especificaciones son estimaciones académicas basadas en investigación histórica, no datos oficiales verificados.")
+    
+    # Info adicional de compra
+    st.markdown("---")
+    st.markdown("### 💼 Información de Adquisición")
+    col_comp1, col_comp2, col_comp3 = st.columns(3)
+    
+    with col_comp1:
+        precio = moneda.get('Precio de Compra')
+        if precio:
+            st.metric("💰 Precio de Compra", f"€{float(precio):,.2f}")
+    
+    with col_comp2:
+        fecha = moneda.get('Fecha de Compra')
+        if fecha:
+            st.metric("📅 Fecha de Compra", fecha.strftime('%d/%m/%Y'))
+        else:
+            st.metric("📅 Fecha de Compra", "N/D")
+    
+    with col_comp3:
+        estado = moneda.get('Estado', 'N/D')
+        st.metric("🏅 Estado", estado)
+
+
+# ============================================================================
 # PÁGINA PRINCIPAL
 # ============================================================================
 
@@ -1307,38 +1444,85 @@ with tab1:
         
         st.markdown("---")
         
-        # Tabla principal
-        st.subheader("📊 Tabla de Monedas")
+        # GALERÍA DE MUSEO - Vista de Tarjetas
+        st.subheader("🏛️ Galería de Museo")
+        st.caption("Explora tu colección como en un museo digital interactivo")
         
-        # Configurar formato de columnas para la visualización
-        column_config = {
-            "Foto": st.column_config.ImageColumn(
-                "Foto",
-                help="Vista previa",
-                width="small"
-            ),
-            "Precio de Compra": st.column_config.NumberColumn(
-                "Precio de Compra",
-                format="$%.2f"
-            ),
-            "Precio de Venta": st.column_config.NumberColumn(
-                "Precio de Venta",
-                format="$%.2f"
-            ),
-            "Fecha de Compra": st.column_config.DateColumn(
-                "Fecha de Compra",
-                format="DD/MM/YYYY"
+        if not df_filtrado.empty:
+            # Crear grid de tarjetas (3 columnas)
+            num_cols = 3
+            rows = [df_filtrado.iloc[i:i+num_cols] for i in range(0, len(df_filtrado), num_cols)]
+            
+            for row_data in rows:
+                cols = st.columns(num_cols)
+                
+                for idx, (col, (_, moneda)) in enumerate(zip(cols, row_data.iterrows())):
+                    with col:
+                        # Tarjeta de moneda
+                        with st.container():
+                            # Imagen
+                            foto_url = moneda.get('Foto')
+                            if foto_url and pd.notna(foto_url):
+                                try:
+                                    st.image(foto_url, use_column_width=True)
+                                except:
+                                    st.image("https://via.placeholder.com/300x300.png?text=🪙", use_column_width=True)
+                            else:
+                                st.image("https://via.placeholder.com/300x300.png?text=🪙", use_column_width=True)
+                            
+                            # Nombre y año
+                            st.markdown(f"**{moneda.get('Nombre', 'Sin nombre')}**")
+                            st.caption(f"Año: {moneda.get('Año', 'N/A')} | {moneda.get('País', 'N/D')}")
+                            
+                            # Botón para ver ficha completa
+                            if st.button(f"📜 Ver Ficha Completa", key=f"ficha_{idx}_{moneda.get('Nombre', '')}_{moneda.get('Año', '')}"):
+                                st.session_state[f'mostrar_ficha_{idx}'] = True
+                            
+                            # Mostrar ficha si se clickeó
+                            if st.session_state.get(f'mostrar_ficha_{idx}', False):
+                                with st.expander("📋 Ficha Técnica Completa", expanded=True):
+                                    mostrar_ficha_tecnica(moneda)
+                                    if st.button("❌ Cerrar", key=f"cerrar_{idx}"):
+                                        st.session_state[f'mostrar_ficha_{idx}'] = False
+                                        st.rerun()
+                            
+                            st.markdown("---")
+        else:
+            st.info("No hay monedas que mostrar con los filtros seleccionados")
+        
+        # Tabla tradicional al final (colapsada)
+        with st.expander("📊 Ver modo tabla (Excel)", expanded=False):
+            st.caption("Vista tradicional en formato tabla para análisis de datos")
+            
+            # Configurar formato de columnas para la visualización
+            column_config = {
+                "Foto": st.column_config.ImageColumn(
+                    "Foto",
+                    help="Vista previa",
+                    width="small"
+                ),
+                "Precio de Compra": st.column_config.NumberColumn(
+                    "Precio de Compra",
+                    format="$%.2f"
+                ),
+                "Precio de Venta": st.column_config.NumberColumn(
+                    "Precio de Venta",
+                    format="$%.2f"
+                ),
+                "Fecha de Compra": st.column_config.DateColumn(
+                    "Fecha de Compra",
+                    format="DD/MM/YYYY"
+                )
+            }
+            
+            # Mostrar la tabla interactiva
+            st.dataframe(
+                df_filtrado,
+                use_container_width=True,
+                height=500,
+                hide_index=True,
+                column_config=column_config
             )
-        }
-        
-        # Mostrar la tabla interactiva
-        st.dataframe(
-            df_filtrado,
-            use_container_width=True,
-            height=500,
-            hide_index=True,
-            column_config=column_config
-        )
         
         # Información adicional
         st.markdown("---")
